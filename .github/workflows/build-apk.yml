@@ -32,6 +32,12 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
+      - name: Reuse debug signing key for app updates
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: photosweep-debug-signing-key-v1
+
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
 

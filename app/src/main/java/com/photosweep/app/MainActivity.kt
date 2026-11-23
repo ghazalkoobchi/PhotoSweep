@@ -108,7 +108,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(16), dp(12), dp(16), dp(10))
             setBackgroundColor(0xFFF3F6F4.toInt())
         }
-        page.addView(text("پاک‌عکس", 27, true).apply { setTextColor(0xFF183A32.toInt()) })
+        page.addView(text("عکس‌یار", 27, true).apply { setTextColor(0xFF183A32.toInt()) })
         page.addView(text("عکس‌های تکراری و شات‌های مشابه را پیدا کن و خودت انتخاب کن چه چیزی حذف شود.", 14, false).apply {
             setTextColor(0xFF50645E.toInt()); setPadding(0, dp(3), 0, dp(8))
         })
@@ -470,3 +470,4 @@ class MainActivity : AppCompatActivity() {
         imagePool.shutdownNow()
     }
 }
+

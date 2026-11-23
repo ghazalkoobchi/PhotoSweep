@@ -20,8 +20,8 @@ android {
         applicationId = "com.photosweep.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 }
 
@@ -30,4 +30,5 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
 }
+
 
