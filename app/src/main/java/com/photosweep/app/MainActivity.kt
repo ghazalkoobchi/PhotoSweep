@@ -72,8 +72,8 @@ class MainActivity : AppCompatActivity() {
         ensurePermission()
     }
 
-    private fun text(value: String, size: Float, bold: Boolean): TextView = TextView(this).apply {
-        text = value; textSize = size; gravity = Gravity.RIGHT
+    private fun text(value: String, size: Int, bold: Boolean): TextView = TextView(this).apply {
+        text = value; textSize = size.toFloat(); gravity = Gravity.RIGHT
         if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
     }
 
