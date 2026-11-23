@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.ContentUris
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -22,10 +23,12 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import org.json.JSONObject
@@ -69,6 +72,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var scanButton: Button
     private lateinit var deleteButton: Button
+    private lateinit var selectionLabel: TextView
     private lateinit var duplicateTab: Button
     private lateinit var similarTab: Button
     private lateinit var list: RecyclerView
@@ -90,9 +94,13 @@ class MainActivity : AppCompatActivity() {
             selected.removeAll(removed)
             saveCache(photos)
             results = groupPhotos(photos)
-            showStatus("حذف انجام شد. اگر عکس تازه‌ای اضافه شده، «به‌روزرسانی» را بزن.")
+            showStatus("حذف انجام شد. برای عکس‌های تازه، «به‌روزرسانی گالری» را بزن.")
             render()
-            Toast.makeText(this, "عکس‌های انتخاب‌شده حذف شدند", Toast.LENGTH_SHORT).show()
+            AlertDialog.Builder(this)
+                .setTitle("حذف انجام شد")
+                .setMessage("${removed.size} عکس حذف شد و از فهرست کنار رفت. اگر عکس تازه‌ای اضافه کرده‌ای، «به‌روزرسانی گالری» را بزن.")
+                .setPositiveButton("متوجه شدم", null)
+                .show()
         } else {
             status.text = "حذف لغو شد؛ عکس‌ها هنوز در فهرست هستند."
         }
@@ -107,6 +115,11 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(10))
             setBackgroundColor(0xFFF3F6F4.toInt())
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(page) { view, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(dp(16) + bars.left, dp(12) + bars.top, dp(16) + bars.right, dp(10) + bars.bottom)
+            insets
         }
         page.addView(text("عکس‌یار", 27, true).apply { setTextColor(0xFF183A32.toInt()) })
         page.addView(text("عکس‌های تکراری و شات‌های مشابه را پیدا کن و خودت انتخاب کن چه چیزی حذف شود.", 14, false).apply {
@@ -134,8 +147,38 @@ class MainActivity : AppCompatActivity() {
         }
         list.layoutManager = grid
         page.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
-        deleteButton = Button(this).apply { text = "حذف انتخاب‌شده‌ها (۰)"; isEnabled = false; setOnClickListener { requestDelete() } }
-        page.addView(deleteButton)
+        val footer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(4))
+            setBackgroundColor(0xFFFFFFFF.toInt())
+            elevation = dp(8).toFloat()
+        }
+        selectionLabel = text("عکسی انتخاب نشده؛ برای حذف، عکس‌ها را علامت بزن.", 13, true).apply {
+            setTextColor(0xFF50645E.toInt())
+            setPadding(dp(4), 0, dp(4), dp(3))
+        }
+        footer.addView(selectionLabel)
+        val deleteColors = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()),
+            intArrayOf(0xFFB3261E.toInt(), 0xFFD9DEDC.toInt())
+        )
+        val deleteTextColors = ColorStateList(
+            arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()),
+            intArrayOf(0xFFFFFFFF.toInt(), 0xFF78827F.toInt())
+        )
+        deleteButton = Button(this).apply {
+            text = "حذف انتخاب‌شده‌ها (۰)"
+            isEnabled = false
+            minHeight = dp(58)
+            backgroundTintList = deleteColors
+            setTextColor(deleteTextColors)
+            val icon = this@MainActivity.getDrawable(R.drawable.ic_delete)?.mutate()?.apply { setTintList(deleteTextColors) }
+            setCompoundDrawablesRelativeWithIntrinsicBounds(icon, null, null, null)
+            compoundDrawablePadding = dp(8)
+            setOnClickListener { requestDelete() }
+        }
+        footer.addView(deleteButton, LinearLayout.LayoutParams(-1, -2))
+        page.addView(footer)
         setContentView(page)
         render()
         ensurePermission()
@@ -375,6 +418,11 @@ class MainActivity : AppCompatActivity() {
         if (!::deleteButton.isInitialized) return
         deleteButton.text = "حذف انتخاب‌شده‌ها (${selected.size})"
         deleteButton.isEnabled = selected.isNotEmpty()
+        selectionLabel.text = if (selected.isEmpty()) {
+            "عکسی انتخاب نشده؛ برای حذف، عکس‌ها را علامت بزن."
+        } else {
+            "${selected.size} عکس برای حذف انتخاب شده"
+        }
     }
 
     private fun requestDelete() {
