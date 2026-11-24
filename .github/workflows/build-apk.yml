@@ -11,6 +11,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      HAS_PERSISTENT_SIGNING_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
     steps:
       - name: Check out project
         uses: actions/checkout@v4
@@ -38,14 +40,31 @@ jobs:
           path: ~/.android/debug.keystore
           key: photosweep-debug-signing-key-v1
 
+      - name: Restore permanent signing key when configured
+        if: env.HAS_PERSISTENT_SIGNING_KEY == 'true'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p "$HOME/.android"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PhotoSweep-debug-APK
+          name: Duplio-debug-APK
           path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload private signing-key backup once
+        if: env.HAS_PERSISTENT_SIGNING_KEY == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Duplio-SIGNING-KEY-PRIVATE
+          path: ~/.android/debug.keystore
           if-no-files-found: error
           retention-days: 14
 

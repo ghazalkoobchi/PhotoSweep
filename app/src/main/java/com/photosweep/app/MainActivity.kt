@@ -51,13 +51,13 @@ class MainActivity : AppCompatActivity() {
         val width: Int,
         val height: Int,
         val hash: Long,
+        val averageHash: Long,
         val quality: Double
     )
     data class PhotoGroup(val photos: List<Photo>)
     data class Results(val duplicates: List<PhotoGroup>, val similar: List<PhotoGroup>)
     private data class Meta(val uri: Uri, val name: String, val date: Long, val modified: Long, val bytes: Long, val width: Int, val height: Int)
-    private data class Cached(val modified: Long, val bytes: Long, val hash: Long, val quality: Double)
-    private data class Fingerprint(val hash: Long, val quality: Double)
+    private data class Cached(val modified: Long, val bytes: Long, val hash: Long, val averageHash: Long, val quality: Double)
     private sealed class Row {
         data class Heading(val label: String, val section: Boolean) : Row()
         data class Cell(val photo: Photo, val recommended: Boolean) : Row()
@@ -83,9 +83,11 @@ class MainActivity : AppCompatActivity() {
     private var showingDuplicates = true
     private var pendingDelete = emptyList<Uri>()
     private var scanRun = 0
+    private var pendingManualRefresh = false
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        if (grants.values.any { it }) scanGallery() else status.text = "برای بررسی عکس‌ها، اجازهٔ دسترسی به گالری لازم است."
+        if (grants.values.any { it }) scanGallery(pendingManualRefresh) else status.text = "برای بررسی عکس‌ها، اجازهٔ دسترسی به گالری لازم است."
+        pendingManualRefresh = false
     }
     private val deleteLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
@@ -121,7 +123,7 @@ class MainActivity : AppCompatActivity() {
             view.setPadding(dp(16) + bars.left, dp(12) + bars.top, dp(16) + bars.right, dp(10) + bars.bottom)
             insets
         }
-        page.addView(text("عکس‌یار", 27, true).apply { setTextColor(0xFF183A32.toInt()) })
+        page.addView(text("Duplio", 27, true).apply { setTextColor(0xFF183A32.toInt()) })
         page.addView(text("عکس‌های تکراری و شات‌های مشابه را پیدا کن و خودت انتخاب کن چه چیزی حذف شود.", 14, false).apply {
             setTextColor(0xFF50645E.toInt()); setPadding(0, dp(3), 0, dp(8))
         })
@@ -129,7 +131,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(0xFF31584E.toInt()); setPadding(dp(10), dp(8), dp(10), dp(8)); setBackgroundColor(0xFFE2EEE9.toInt())
         }
         page.addView(status)
-        scanButton = Button(this).apply { text = "بررسی / به‌روزرسانی گالری"; setOnClickListener { ensurePermission() } }
+        scanButton = Button(this).apply { text = "بررسی / به‌روزرسانی گالری"; setOnClickListener { ensurePermission(manual = true) } }
         page.addView(scanButton, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         duplicateTab = Button(this).apply { setOnClickListener { showingDuplicates = true; render() } }
@@ -191,16 +193,20 @@ class MainActivity : AppCompatActivity() {
         if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
     }
 
-    private fun ensurePermission() {
+    private fun ensurePermission(manual: Boolean = false) {
+        pendingManualRefresh = manual
         val permissions = when {
             Build.VERSION.SDK_INT >= 34 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
             Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
             else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
-        if (permissions.any { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) scanGallery() else permissionLauncher.launch(permissions)
+        if (permissions.any { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
+            scanGallery(manual)
+            pendingManualRefresh = false
+        } else permissionLauncher.launch(permissions)
     }
 
-    private fun scanGallery() {
+    private fun scanGallery(manual: Boolean = false) {
         if (!scanButton.isEnabled) return
         val run = ++scanRun
         selected.clear()
@@ -216,8 +222,8 @@ class MainActivity : AppCompatActivity() {
                 for (meta in metadata) {
                     val key = meta.uri.toString()
                     val old = cached[key]
-                    if (old != null && old.modified == meta.modified && old.bytes == meta.bytes) {
-                        known[key] = Photo(meta.uri, meta.name, meta.date, meta.modified, meta.bytes, meta.width, meta.height, old.hash, old.quality)
+                    if (old != null && old.averageHash != Long.MIN_VALUE && old.modified == meta.modified && old.bytes == meta.bytes) {
+                        known[key] = Photo(meta.uri, meta.name, meta.date, meta.modified, meta.bytes, meta.width, meta.height, old.hash, old.averageHash, old.quality)
                     } else changed.add(meta)
                 }
                 runOnUiThread { if (run == scanRun) status.text = "در حال بررسی عکس‌های جدید یا تغییرکرده: ۰ از ${changed.size} • ${metadata.size} عکس در گالری" }
@@ -242,8 +248,24 @@ class MainActivity : AppCompatActivity() {
                     results = grouped
                     scanButton.isEnabled = true
                     val cachedCount = metadata.size - changed.size
-                    showStatus("بررسی ${metadata.size} عکس تمام شد؛ $cachedCount مورد از حافظهٔ اسکن قبلی استفاده شد. برای عکس‌های تازه، به‌روزرسانی را بزن.")
+                    val groupedPhotoCount = (grouped.duplicates + grouped.similar).flatMap { it.photos }.map { it.uri }.toSet().size
+                    val ungroupedCount = (fresh.size - groupedPhotoCount).coerceAtLeast(0)
+                    val unreadCount = (metadata.size - fresh.size).coerceAtLeast(0)
+                    val summary = "به‌روزرسانی تمام شد: ${changed.size} عکس تازه/تغییرکرده بررسی شد؛ $cachedCount عکس از cache آمد. ${grouped.duplicates.size} گروه تکراری و ${grouped.similar.size} گروه مشابه پیدا شد."
+                    showStatus(summary)
                     render()
+                    if (manual) {
+                        val notes = buildList {
+                            if (ungroupedCount > 0) add("$ungroupedCount عکس با مورد دیگری گروه نشد و در تب‌ها نمایش داده نمی‌شود.")
+                            if (unreadCount > 0) add("خواندن $unreadCount عکس ممکن نشد؛ مجوز گالری را بررسی کن.")
+                        }
+                        val extra = if (notes.isEmpty()) "" else "\n\n${notes.joinToString("\n")}"
+                        AlertDialog.Builder(this)
+                            .setTitle("به‌روزرسانی تمام شد")
+                            .setMessage(summary + extra)
+                            .setPositiveButton("باشه", null)
+                            .show()
+                    }
                 }
             } catch (error: Exception) {
                 runOnUiThread {
@@ -286,18 +308,31 @@ class MainActivity : AppCompatActivity() {
             val options = BitmapFactory.Options().apply { inSampleSize = 8 }
             contentResolver.openInputStream(meta.uri).use { BitmapFactory.decodeStream(it, null, options) }
         } ?: return null
-        val (hash, quality) = calculateMetrics(bitmap, meta.width, meta.height)
+        val (hash, averageHash, quality) = calculateMetrics(bitmap, meta.width, meta.height)
         bitmap.recycle()
-        Photo(meta.uri, meta.name, meta.date, meta.modified, meta.bytes, meta.width, meta.height, hash, quality)
+        Photo(meta.uri, meta.name, meta.date, meta.modified, meta.bytes, meta.width, meta.height, hash, averageHash, quality)
     }.getOrNull()
 
-    private fun calculateMetrics(bitmap: Bitmap, width: Int, height: Int): Pair<Long, Double> {
+    private fun calculateMetrics(bitmap: Bitmap, width: Int, height: Int): Triple<Long, Long, Double> {
         val hashBitmap = Bitmap.createScaledBitmap(bitmap, 9, 8, true)
         var hash = 0L
         for (y in 0 until 8) for (x in 0 until 8) {
             if (luma(hashBitmap.getPixel(x, y)) > luma(hashBitmap.getPixel(x + 1, y))) hash = (hash shl 1) or 1L else hash = hash shl 1
         }
         hashBitmap.recycle()
+        val averageBitmap = Bitmap.createScaledBitmap(bitmap, 8, 8, true)
+        val averagePixels = IntArray(64)
+        var averageSum = 0L
+        for (y in 0 until 8) for (x in 0 until 8) {
+            val index = y * 8 + x
+            val value = luma(averageBitmap.getPixel(x, y))
+            averagePixels[index] = value
+            averageSum += value
+        }
+        averageBitmap.recycle()
+        val averageLevel = (averageSum / 64).toInt()
+        var averageHash = 0L
+        averagePixels.forEach { value -> averageHash = (averageHash shl 1) or if (value >= averageLevel) 1L else 0L }
         val small = Bitmap.createScaledBitmap(bitmap, 64, 64, true)
         var sum = 0.0; var squares = 0.0; var edges = 0.0; var color = 0.0
         val values = IntArray(64 * 64)
@@ -323,13 +358,13 @@ class MainActivity : AppCompatActivity() {
         val resolution = (ln((width.toLong().coerceAtLeast(1) * height.toLong().coerceAtLeast(1)).toDouble()) / ln(48_000_000.0)).coerceIn(0.0, 1.0)
         val colorfulness = color / count
         val quality = 0.45 * sharpness + 0.20 * exposure + 0.15 * contrast + 0.15 * resolution + 0.05 * colorfulness
-        return hash to quality
+        return Triple(hash, averageHash, quality)
     }
 
     private fun luma(pixel: Int): Int = ((pixel shr 16 and 255) * 299 + (pixel shr 8 and 255) * 587 + (pixel and 255) * 114) / 1000
 
     private fun groupPhotos(items: List<Photo>): Results {
-        val exactBuckets = items.groupBy { "${it.hash}:${it.width}x${it.height}:${it.bytes}" }
+        val exactBuckets = items.groupBy { "${it.hash}:${it.averageHash}:${it.width}x${it.height}:${it.bytes}" }
         val duplicates = exactBuckets.values.filter { it.size > 1 }.map { PhotoGroup(it.sortedByDescending { p -> p.quality }) }
             .sortedByDescending { it.photos.size }
         val duplicateUris = duplicates.flatMap { it.photos }.map { it.uri }.toHashSet()
@@ -343,27 +378,42 @@ class MainActivity : AppCompatActivity() {
         }
         fun join(a: Int, b: Int) { val ra = root(a); val rb = root(b); if (ra != rb) parent[rb] = ra }
         val byTime = candidates.indices.sortedBy { candidates[it].dateSeconds }
-        val bands = Array(8) { HashMap<Int, MutableList<Int>>() }
+        val differenceBands = Array(8) { HashMap<Int, MutableList<Int>>() }
+        val averageBands = Array(8) { HashMap<Int, MutableList<Int>>() }
         for (position in byTime.indices) {
             val i = byTime[position]
             val photo = candidates[i]
             val possible = HashSet<Int>()
             for (band in 0 until 8) {
-                val key = ((photo.hash ushr (band * 8)) and 255L).toInt()
-                val prior = bands[band][key] ?: continue
-                for (k in prior.indices.reversed()) {
-                    val j = prior[k]
-                    if (photo.dateSeconds - candidates[j].dateSeconds > 15 * 60) break
-                    possible.add(j)
+                val differenceKey = ((photo.hash ushr (band * 8)) and 255L).toInt()
+                differenceBands[band][differenceKey]?.let { prior ->
+                    for (k in prior.indices.reversed()) {
+                        val j = prior[k]
+                        if (photo.dateSeconds - candidates[j].dateSeconds > 15 * 60) break
+                        possible.add(j)
+                    }
+                }
+                val averageKey = ((photo.averageHash ushr (band * 8)) and 255L).toInt()
+                averageBands[band][averageKey]?.let { prior ->
+                    possible.addAll(prior)
                 }
             }
             for (j in possible) {
-                val distance = java.lang.Long.bitCount(photo.hash xor candidates[j].hash)
-                if (distance in 0..7 && abs(photo.dateSeconds - candidates[j].dateSeconds) <= 15 * 60) join(i, j)
+                val other = candidates[j]
+                val differenceDistance = java.lang.Long.bitCount(photo.hash xor other.hash)
+                val averageDistance = java.lang.Long.bitCount(photo.averageHash xor other.averageHash)
+                val closeInTime = abs(photo.dateSeconds - other.dateSeconds) <= 15 * 60
+                val sameShape = photo.width > 0 && photo.height > 0 && other.width > 0 && other.height > 0 &&
+                    abs((photo.width.toDouble() / photo.height) / (other.width.toDouble() / other.height) - 1.0) <= 0.08
+                val globallySimilar = sameShape && averageDistance <= 4 && differenceDistance <= 20
+                val burstSimilar = closeInTime && differenceDistance <= 7
+                if (globallySimilar || burstSimilar) join(i, j)
             }
             for (band in 0 until 8) {
-                val key = ((photo.hash ushr (band * 8)) and 255L).toInt()
-                bands[band].getOrPut(key) { ArrayList() }.add(i)
+                val differenceKey = ((photo.hash ushr (band * 8)) and 255L).toInt()
+                differenceBands[band].getOrPut(differenceKey) { ArrayList() }.add(i)
+                val averageKey = ((photo.averageHash ushr (band * 8)) and 255L).toInt()
+                averageBands[band].getOrPut(averageKey) { ArrayList() }.add(i)
             }
         }
         val similar = candidates.indices.groupBy { root(it) }.values.filter { it.size > 1 }
@@ -379,7 +429,7 @@ class MainActivity : AppCompatActivity() {
         while (keys.hasNext()) {
             val key = keys.next()
             val value = root.optJSONObject(key) ?: continue
-            cache[key] = Cached(value.optLong("modified"), value.optLong("bytes"), value.optLong("hash"), value.optDouble("quality"))
+            cache[key] = Cached(value.optLong("modified"), value.optLong("bytes"), value.optLong("hash"), value.optLong("averageHash", Long.MIN_VALUE), value.optDouble("quality"))
         }
         return cache
     }
@@ -387,7 +437,7 @@ class MainActivity : AppCompatActivity() {
     private fun saveCache(items: List<Photo>) {
         val json = JSONObject()
         items.forEach { p ->
-            json.put(p.uri.toString(), JSONObject().put("modified", p.modifiedSeconds).put("bytes", p.bytes).put("hash", p.hash).put("quality", p.quality))
+            json.put(p.uri.toString(), JSONObject().put("modified", p.modifiedSeconds).put("bytes", p.bytes).put("hash", p.hash).put("averageHash", p.averageHash).put("quality", p.quality))
         }
         getSharedPreferences("photo_index", MODE_PRIVATE).edit().putString("items", json.toString()).apply()
     }
