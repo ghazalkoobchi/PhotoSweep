@@ -1,3 +1,12 @@
 <resources>
-    <color name="ic_launcher_background">#126C5B</color>
+    <color name="ic_launcher_background">#4315C7</color>
+    <color name="duplio_background">#F4F6F5</color>
+    <color name="duplio_surface">#FFFFFF</color>
+    <color name="duplio_mint">#E2EEEA</color>
+    <color name="duplio_mint_badge">#DCEFE8</color>
+    <color name="duplio_green">#167A63</color>
+    <color name="duplio_ink">#173831</color>
+    <color name="duplio_supporting">#52645E</color>
+    <color name="duplio_button">#D6D8D7</color>
+    <color name="duplio_danger">#B3261D</color>
 </resources>

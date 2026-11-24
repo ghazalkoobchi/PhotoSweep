@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -42,6 +43,10 @@ import kotlin.math.ln
 import kotlin.math.sqrt
 
 class MainActivity : AppCompatActivity() {
+    private val ink = 0xFF173831.toInt()
+    private val supporting = 0xFF52645E.toInt()
+    private val brandGreen = 0xFF167A63.toInt()
+    private val pageColor = 0xFFF4F6F5.toInt()
     data class Photo(
         val uri: Uri,
         val name: String,
@@ -115,32 +120,37 @@ class MainActivity : AppCompatActivity() {
         window.decorView.layoutDirection = View.LAYOUT_DIRECTION_RTL
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(10))
-            setBackgroundColor(0xFFF3F6F4.toInt())
+            setPadding(dp(16), dp(14), dp(16), dp(10))
+            setBackgroundColor(pageColor)
         }
         ViewCompat.setOnApplyWindowInsetsListener(page) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(dp(16) + bars.left, dp(12) + bars.top, dp(16) + bars.right, dp(10) + bars.bottom)
+            view.setPadding(dp(16) + bars.left, dp(14) + bars.top, dp(16) + bars.right, dp(10) + bars.bottom)
             insets
         }
-        page.addView(text("Duplio", 27, true).apply { setTextColor(0xFF183A32.toInt()) })
+        page.addView(text("Duplio", 28, true).apply { setTextColor(ink); setPadding(0, 0, 0, dp(2)) })
         page.addView(text("عکس‌های تکراری و شات‌های مشابه را پیدا کن و خودت انتخاب کن چه چیزی حذف شود.", 14, false).apply {
-            setTextColor(0xFF50645E.toInt()); setPadding(0, dp(3), 0, dp(8))
+            setTextColor(supporting); setPadding(0, dp(3), 0, dp(10)); setLineSpacing(dp(2).toFloat(), 1f)
         })
         status = text("برای شروع، دسترسی عکس‌ها را بده و گالری را بررسی کن.", 13, false).apply {
-            setTextColor(0xFF31584E.toInt()); setPadding(dp(10), dp(8), dp(10), dp(8)); setBackgroundColor(0xFFE2EEE9.toInt())
+            setTextColor(supporting); setPadding(dp(14), dp(11), dp(14), dp(11)); setLineSpacing(dp(2).toFloat(), 1f)
+            background = rounded(0xFFE2EEEA.toInt(), 12, 0)
         }
         page.addView(status)
-        scanButton = Button(this).apply { text = "بررسی / به‌روزرسانی گالری"; setOnClickListener { ensurePermission(manual = true) } }
-        page.addView(scanButton, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        scanButton = Button(this).apply {
+            text = "بررسی / به‌روزرسانی گالری"
+            styleButton(this, 0xFFD6D8D7.toInt(), ink)
+            setOnClickListener { ensurePermission(manual = true) }
+        }
+        page.addView(scanButton, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(12); bottomMargin = dp(10) })
         val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        duplicateTab = Button(this).apply { setOnClickListener { showingDuplicates = true; render() } }
-        similarTab = Button(this).apply { setOnClickListener { showingDuplicates = false; render() } }
-        tabs.addView(duplicateTab, LinearLayout.LayoutParams(0, -2, 1f))
-        tabs.addView(similarTab, LinearLayout.LayoutParams(0, -2, 1f))
-        page.addView(tabs)
+        duplicateTab = Button(this).apply { styleButton(this, 0xFFD6D8D7.toInt(), ink); setOnClickListener { showingDuplicates = true; render() } }
+        similarTab = Button(this).apply { styleButton(this, 0xFFD6D8D7.toInt(), ink); setOnClickListener { showingDuplicates = false; render() } }
+        tabs.addView(duplicateTab, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(6) })
+        tabs.addView(similarTab, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(6) })
+        page.addView(tabs, LinearLayout.LayoutParams(-1, dp(48)).apply { bottomMargin = dp(8) })
 
-        list = RecyclerView(this).apply { setBackgroundColor(0xFFF3F6F4.toInt()); itemAnimator = null }
+        list = RecyclerView(this).apply { setBackgroundColor(pageColor); itemAnimator = null; clipToPadding = false; setPadding(0, dp(2), 0, dp(4)) }
         adapter = PhotoAdapter()
         list.adapter = adapter
         val grid = GridLayoutManager(this, 2)
@@ -151,32 +161,35 @@ class MainActivity : AppCompatActivity() {
         page.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
         val footer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(6), dp(10), dp(4))
-            setBackgroundColor(0xFFFFFFFF.toInt())
-            elevation = dp(8).toFloat()
+            setPadding(dp(4), dp(8), dp(4), dp(4))
+            setBackgroundColor(pageColor)
         }
         selectionLabel = text("عکسی انتخاب نشده؛ برای حذف، عکس‌ها را علامت بزن.", 13, true).apply {
-            setTextColor(0xFF50645E.toInt())
-            setPadding(dp(4), 0, dp(4), dp(3))
+            setTextColor(supporting)
+            setPadding(dp(4), 0, dp(4), dp(6))
         }
         footer.addView(selectionLabel)
         val deleteColors = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()),
-            intArrayOf(0xFFB3261E.toInt(), 0xFFD9DEDC.toInt())
+            intArrayOf(0xFFB3261D.toInt(), 0xFFD6D8D7.toInt())
         )
         val deleteTextColors = ColorStateList(
             arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf()),
-            intArrayOf(0xFFFFFFFF.toInt(), 0xFF78827F.toInt())
+            intArrayOf(0xFFFFFFFF.toInt(), 0xFF68736F.toInt())
         )
         deleteButton = Button(this).apply {
             text = "حذف انتخاب‌شده‌ها (۰)"
             isEnabled = false
-            minHeight = dp(58)
+            minHeight = dp(56)
+            isAllCaps = false
             backgroundTintList = deleteColors
             setTextColor(deleteTextColors)
             val icon = this@MainActivity.getDrawable(R.drawable.ic_delete)?.mutate()?.apply { setTintList(deleteTextColors) }
             setCompoundDrawablesRelativeWithIntrinsicBounds(icon, null, null, null)
             compoundDrawablePadding = dp(8)
+            background = rounded(0xFFB3261D.toInt(), 14, 0)
+            backgroundTintList = deleteColors
+            setPadding(dp(18), dp(8), dp(18), dp(8))
             setOnClickListener { requestDelete() }
         }
         footer.addView(deleteButton, LinearLayout.LayoutParams(-1, -2))
@@ -187,6 +200,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private fun rounded(color: Int, radiusDp: Int, strokeColor: Int, strokeDp: Int = 1): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = dp(radiusDp).toFloat()
+            if (strokeColor != 0) setStroke(dp(strokeDp), strokeColor)
+        }
+
+    private fun styleButton(button: Button, backgroundColor: Int, textColor: Int) {
+        button.isAllCaps = false
+        button.textSize = 14f
+        button.setTypeface(button.typeface, android.graphics.Typeface.BOLD)
+        button.setTextColor(textColor)
+        button.background = rounded(backgroundColor, 13, 0)
+        button.setPadding(dp(12), dp(7), dp(12), dp(7))
+        button.minHeight = dp(48)
+        button.stateListAnimator = null
+    }
 
     private fun text(value: String, size: Int, bold: Boolean): TextView = TextView(this).apply {
         text = value; textSize = size.toFloat(); gravity = Gravity.RIGHT
@@ -457,8 +488,12 @@ class MainActivity : AppCompatActivity() {
         }
         if (groups.isEmpty()) rows.add(Row.Heading(if (photos.isEmpty()) "هنوز عکسی بررسی نشده است." else "در این دسته موردی پیدا نشد.", true))
         adapter.setRows(rows)
-        duplicateTab.alpha = if (showingDuplicates) 1f else 0.72f
-        similarTab.alpha = if (showingDuplicates) 0.72f else 1f
+        val selectedTab = rounded(brandGreen, 13, 0)
+        val idleTab = rounded(0xFFD6D8D7.toInt(), 13, 0)
+        duplicateTab.background = if (showingDuplicates) selectedTab else idleTab
+        duplicateTab.setTextColor(if (showingDuplicates) 0xFFFFFFFF.toInt() else ink)
+        similarTab.background = if (!showingDuplicates) selectedTab else idleTab
+        similarTab.setTextColor(if (!showingDuplicates) 0xFFFFFFFF.toInt() else ink)
         updateDeleteButton()
     }
 
@@ -490,25 +525,49 @@ class MainActivity : AppCompatActivity() {
         override fun getItemCount(): Int = rows.size
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
             if (viewType == 0) {
-                val label = text("", 14, true).apply { setTextColor(0xFF183A32.toInt()); setPadding(dp(10), dp(8), dp(10), dp(8)) }
+                val label = text("", 14, true).apply { setTextColor(ink); setPadding(dp(10), dp(8), dp(10), dp(8)) }
                 return HeaderHolder(label)
             }
             val card = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL; setPadding(dp(5), dp(5), dp(5), dp(8)); setBackgroundColor(0xFFFFFFFF.toInt())
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(6), dp(6), dp(6), dp(9))
+                background = rounded(0xFFFFFFFF.toInt(), 14, 0xFFE1E7E4.toInt())
+                layoutParams = RecyclerView.LayoutParams(-1, -2).apply {
+                    setMargins(dp(4), dp(5), dp(4), dp(5))
+                }
             }
             val frame = FrameLayout(this@MainActivity)
-            val image = ImageView(this@MainActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0xFFE8ECE9.toInt()) }
-            frame.addView(image, FrameLayout.LayoutParams(-1, dp(164)))
-            val check = CheckBox(this@MainActivity).apply { buttonTintList = android.content.res.ColorStateList.valueOf(0xFF137C65.toInt()) }
-            frame.addView(check, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.START))
-            val star = TextView(this@MainActivity).apply {
-                text = "★ بهترین"; textSize = 11f; setTextColor(0xFFFFFFFF.toInt()); setBackgroundColor(0xCC137C65.toInt()); setPadding(dp(5), dp(3), dp(5), dp(3)); visibility = View.GONE
+            val image = ImageView(this@MainActivity).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                setBackgroundColor(0xFFE8ECE9.toInt())
+                background = rounded(0xFFE8ECE9.toInt(), 9, 0)
+                clipToOutline = true
             }
-            frame.addView(star, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END))
+            frame.addView(image, FrameLayout.LayoutParams(-1, dp(164)))
+            val check = CheckBox(this@MainActivity).apply {
+                buttonTintList = ColorStateList(
+                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                    intArrayOf(0xFF167A63.toInt(), 0xFF59645F.toInt())
+                )
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                background = rounded(0xCCFFFFFF.toInt(), 12, 0)
+                scaleX = 0.92f; scaleY = 0.92f
+            }
+            frame.addView(check, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.START).apply {
+                leftMargin = dp(7); topMargin = dp(7)
+            })
+            val star = TextView(this@MainActivity).apply {
+                text = "★ بهترین"; textSize = 11f; setTextColor(0xFF167A63.toInt())
+                background = rounded(0xFFDCEFE8.toInt(), 9, 0)
+                setPadding(dp(8), dp(5), dp(8), dp(5)); visibility = View.GONE
+            }
+            frame.addView(star, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
+                rightMargin = dp(7); topMargin = dp(7)
+            })
             card.addView(frame)
-            val name = text("", 12, true).apply { setTextColor(0xFF243A34.toInt()); maxLines = 2; setPadding(dp(2), dp(5), dp(2), 0) }
+            val name = text("", 12, true).apply { setTextColor(ink); maxLines = 2; setPadding(dp(2), dp(8), dp(2), 0); minHeight = dp(42); gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL }
             card.addView(name)
-            val date = text("", 10, false).apply { setTextColor(0xFF687A74.toInt()); setPadding(dp(2), dp(2), dp(2), 0) }
+            val date = text("", 10, false).apply { setTextColor(supporting); setPadding(dp(2), dp(3), dp(2), 0) }
             card.addView(date)
             return PhotoHolder(card, image, check, star, name, date)
         }
@@ -522,8 +581,8 @@ class MainActivity : AppCompatActivity() {
             fun bind(row: Row.Heading) {
                 label.text = row.label
                 label.textSize = if (row.section) 14f else 15f
-                label.setBackgroundColor(if (row.section) 0xFFE2EEE9.toInt() else 0xFFF3F6F4.toInt())
-                label.setPadding(dp(8), dp(if (row.section) 9 else 12), dp(8), dp(7))
+                label.background = if (row.section) rounded(0xFFE2EEEA.toInt(), 12, 0) else rounded(pageColor, 10, 0)
+                label.setPadding(dp(11), dp(if (row.section) 10 else 12), dp(11), dp(8))
             }
         }
         inner class PhotoHolder(
@@ -544,8 +603,18 @@ class MainActivity : AppCompatActivity() {
                 date.text = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(photo.dateSeconds * 1000))
                 check.setOnCheckedChangeListener(null)
                 check.isChecked = selected.contains(photo.uri)
+                (itemView as? LinearLayout)?.background = rounded(
+                    0xFFFFFFFF.toInt(), 14,
+                    if (check.isChecked) 0xFF167A63.toInt() else 0xFFE1E7E4.toInt(),
+                    if (check.isChecked) 2 else 1
+                )
                 check.setOnCheckedChangeListener { _, checked ->
                     if (checked) selected.add(photo.uri) else selected.remove(photo.uri)
+                    (itemView as? LinearLayout)?.background = rounded(
+                        0xFFFFFFFF.toInt(), 14,
+                        if (checked) 0xFF167A63.toInt() else 0xFFE1E7E4.toInt(),
+                        if (checked) 2 else 1
+                    )
                     updateDeleteButton()
                 }
                 if (cachedBitmap == null) {
