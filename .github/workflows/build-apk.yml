@@ -59,12 +59,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Prepare private signing-key backup
+        if: env.HAS_PERSISTENT_SIGNING_KEY == 'false'
+        run: cp "$HOME/.android/debug.keystore" "$RUNNER_TEMP/debug.keystore"
+
       - name: Upload private signing-key backup once
         if: env.HAS_PERSISTENT_SIGNING_KEY == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: Duplio-SIGNING-KEY-PRIVATE
-          path: ~/.android/debug.keystore
+          path: ${{ runner.temp }}/debug.keystore
           if-no-files-found: error
           retention-days: 14
 
