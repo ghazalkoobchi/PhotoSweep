@@ -48,6 +48,22 @@ jobs:
           mkdir -p "$HOME/.android"
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
 
+      - name: Create reusable debug signing key when needed
+        if: env.HAS_PERSISTENT_SIGNING_KEY == 'false'
+        run: |
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -v \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
 
