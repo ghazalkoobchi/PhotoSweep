@@ -290,7 +290,7 @@ class MainActivity : AppCompatActivity() {
                     val groupedPhotoCount = (grouped.duplicates + grouped.similar).flatMap { it.photos }.map { it.uri }.toSet().size
                     val ungroupedCount = (fresh.size - groupedPhotoCount).coerceAtLeast(0)
                     val unreadCount = (metadata.size - fresh.size).coerceAtLeast(0)
-                    val summary = "بررسی تمام شد: ${fresh.size} از ${metadata.size} عکس گالری خوانده شد. ${grouped.duplicates.size} گروه تکراری و ${grouped.similar.size} گروه مشابه پیدا شد."
+                    val summary = "بررسی تمام شد: ${fresh.size} عکس از ${metadata.size} عکس MediaStore تحلیل شد. ${grouped.duplicates.size} گروه تکراری و ${grouped.similar.size} گروه مشابه پیدا شد."
                     showStatus(summary)
                     render()
                     if (manual) {
@@ -321,6 +321,7 @@ class MainActivity : AppCompatActivity() {
         val out = ArrayList<Meta>()
         val columns = arrayOf(
             MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME, MediaStore.Images.Media.DATE_ADDED,
+            MediaStore.Images.Media.DATE_TAKEN,
             MediaStore.Images.Media.DATE_MODIFIED, MediaStore.Images.Media.SIZE, MediaStore.Images.Media.WIDTH, MediaStore.Images.Media.HEIGHT
         )
         val volumes = MediaStore.getExternalVolumeNames(this).ifEmpty { setOf(MediaStore.VOLUME_EXTERNAL_PRIMARY) }
@@ -330,13 +331,17 @@ class MainActivity : AppCompatActivity() {
             val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
             val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
+            val dateTakenCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_TAKEN)
             val modCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED)
             val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
             val widthCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.WIDTH)
             val heightCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)
             while (cursor.moveToNext()) {
                 val uri = ContentUris.withAppendedId(collection, cursor.getLong(idCol))
-                out.add(Meta(uri, cursor.getString(nameCol) ?: "عکس", cursor.getLong(dateCol), cursor.getLong(modCol), cursor.getLong(sizeCol), cursor.getInt(widthCol), cursor.getInt(heightCol)))
+                // Gallery chronology follows capture time; fall back to indexed-added time when EXIF capture time is absent.
+                val capturedAtMillis = cursor.getLong(dateTakenCol)
+                val sortTimestampSeconds = if (capturedAtMillis > 0) capturedAtMillis / 1000 else cursor.getLong(dateCol)
+                out.add(Meta(uri, cursor.getString(nameCol) ?: "عکس", sortTimestampSeconds, cursor.getLong(modCol), cursor.getLong(sizeCol), cursor.getInt(widthCol), cursor.getInt(heightCol)))
             }
         }
         }
@@ -565,6 +570,8 @@ class MainActivity : AppCompatActivity() {
             }
             frame.addView(image, FrameLayout.LayoutParams(-1, dp(164)))
             val check = CheckBox(this@MainActivity).apply {
+                layoutDirection = View.LAYOUT_DIRECTION_LTR
+                gravity = Gravity.CENTER
                 buttonTintList = ColorStateList(
                     arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
                     intArrayOf(0xFF167A63.toInt(), 0xFF59645F.toInt())
@@ -573,8 +580,8 @@ class MainActivity : AppCompatActivity() {
                 background = rounded(0xCCFFFFFF.toInt(), 12, 0)
                 scaleX = 0.92f; scaleY = 0.92f
             }
-            frame.addView(check, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.START).apply {
-                leftMargin = dp(7); topMargin = dp(7)
+            frame.addView(check, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.END).apply {
+                rightMargin = dp(7); topMargin = dp(7)
             })
             val star = TextView(this@MainActivity).apply {
                 text = "★ بهترین"; textSize = 11f; setTextColor(0xFF167A63.toInt())
