@@ -37,6 +37,7 @@ import java.util.Date
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.Executors
+import java.security.MessageDigest
 import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.sqrt
@@ -54,8 +55,10 @@ class MainActivity : AppCompatActivity() {
         val bytes: Long,
         val width: Int,
         val height: Int,
+        val sha256: String,
         val hash: Long,
         val averageHash: Long,
+        val pHash: Long,
         val quality: Double
     )
     data class PhotoGroup(val photos: List<Photo>)
@@ -347,12 +350,23 @@ class MainActivity : AppCompatActivity() {
             val options = BitmapFactory.Options().apply { inSampleSize = 8 }
             contentResolver.openInputStream(meta.uri).use { BitmapFactory.decodeStream(it, null, options) }
         } ?: return null
-        val (hash, averageHash, quality) = calculateMetrics(bitmap, meta.width, meta.height)
+        val (hash, averageHash, pHash, quality) = calculateMetrics(bitmap, meta.width, meta.height)
         bitmap.recycle()
-        Photo(meta.uri, meta.name, meta.date, meta.modified, meta.bytes, meta.width, meta.height, hash, averageHash, quality)
+        val sha = MessageDigest.getInstance("SHA-256")
+        contentResolver.openInputStream(meta.uri).use { input ->
+            requireNotNull(input) { "فایل عکس قابل خواندن نیست" }
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                sha.update(buffer, 0, count)
+            }
+        }
+        val sha256 = sha.digest().joinToString("") { "%02x".format(it) }
+        Photo(meta.uri, meta.name, meta.date, meta.modified, meta.bytes, meta.width, meta.height, sha256, hash, averageHash, pHash, quality)
     }.getOrNull()
 
-    private fun calculateMetrics(bitmap: Bitmap, width: Int, height: Int): Triple<Long, Long, Double> {
+    private fun calculateMetrics(bitmap: Bitmap, width: Int, height: Int): Metrics {
         val hashBitmap = Bitmap.createScaledBitmap(bitmap, 9, 8, true)
         var hash = 0L
         for (y in 0 until 8) for (x in 0 until 8) {
@@ -372,6 +386,7 @@ class MainActivity : AppCompatActivity() {
         val averageLevel = (averageSum / 64).toInt()
         var averageHash = 0L
         averagePixels.forEach { value -> averageHash = (averageHash shl 1) or if (value >= averageLevel) 1L else 0L }
+        val pHash = calculatePHash(bitmap)
         val small = Bitmap.createScaledBitmap(bitmap, 64, 64, true)
         var sum = 0.0; var squares = 0.0; var edges = 0.0; var color = 0.0
         val values = IntArray(64 * 64)
@@ -397,68 +412,80 @@ class MainActivity : AppCompatActivity() {
         val resolution = (ln((width.toLong().coerceAtLeast(1) * height.toLong().coerceAtLeast(1)).toDouble()) / ln(48_000_000.0)).coerceIn(0.0, 1.0)
         val colorfulness = color / count
         val quality = 0.45 * sharpness + 0.20 * exposure + 0.15 * contrast + 0.15 * resolution + 0.05 * colorfulness
-        return Triple(hash, averageHash, quality)
+        return Metrics(hash, averageHash, pHash, quality)
+    }
+
+    private data class Metrics(val dHash: Long, val averageHash: Long, val pHash: Long, val quality: Double)
+
+    private fun calculatePHash(bitmap: Bitmap): Long {
+        val size = 32
+        val gray = Bitmap.createScaledBitmap(bitmap, size, size, true)
+        val values = Array(size) { y -> IntArray(size) { x -> luma(gray.getPixel(x, y)) } }
+        gray.recycle()
+        val coeff = Array(8) { u -> DoubleArray(8) { v ->
+            var sum = 0.0
+            for (y in 0 until size) for (x in 0 until size) {
+                sum += values[y][x] * kotlin.math.cos((2 * x + 1) * u * Math.PI / (2 * size)) *
+                    kotlin.math.cos((2 * y + 1) * v * Math.PI / (2 * size))
+            }
+            sum
+        } }
+        val median = coeff.flatMapIndexed { y, row -> row.mapIndexedNotNull { x, value -> if (x == 0 && y == 0) null else value } }
+            .sorted()[31]
+        var hash = 0L
+        for (y in 0 until 8) for (x in 0 until 8) hash = (hash shl 1) or if (coeff[y][x] >= median) 1L else 0L
+        return hash
     }
 
     private fun luma(pixel: Int): Int = ((pixel shr 16 and 255) * 299 + (pixel shr 8 and 255) * 587 + (pixel and 255) * 114) / 1000
 
     private fun groupPhotos(items: List<Photo>): Results {
-        val exactBuckets = items.groupBy { "${it.hash}:${it.averageHash}:${it.width}x${it.height}:${it.bytes}" }
+        val exactBuckets = items.distinctBy { it.uri }.groupBy { it.sha256 }
         val duplicates = exactBuckets.values.filter { it.size > 1 }.map { PhotoGroup(it.sortedByDescending { p -> p.quality }) }
             .sortedByDescending { it.photos.size }
         val duplicateUris = duplicates.flatMap { it.photos }.map { it.uri }.toHashSet()
         val candidates = items.filterNot { duplicateUris.contains(it.uri) }
         if (candidates.size < 2) return Results(duplicates, emptyList())
-        val parent = IntArray(candidates.size) { it }
-        fun root(index: Int): Int {
-            var n = index
-            while (parent[n] != n) { parent[n] = parent[parent[n]]; n = parent[n] }
-            return n
-        }
-        fun join(a: Int, b: Int) { val ra = root(a); val rb = root(b); if (ra != rb) parent[rb] = ra }
-        val byTime = candidates.indices.sortedBy { candidates[it].dateSeconds }
-        val differenceBands = Array(8) { HashMap<Int, MutableList<Int>>() }
-        val averageBands = Array(8) { HashMap<Int, MutableList<Int>>() }
-        for (position in byTime.indices) {
-            val i = byTime[position]
-            val photo = candidates[i]
-            val possible = HashSet<Int>()
+        val similar = ArrayList<PhotoGroup>()
+        val assigned = HashSet<Uri>()
+        val ordered = candidates.sortedByDescending { it.quality }
+        val pHashBands = Array(8) { HashMap<Int, MutableList<Photo>>() }
+        ordered.forEach { photo ->
             for (band in 0 until 8) {
-                val differenceKey = ((photo.hash ushr (band * 8)) and 255L).toInt()
-                differenceBands[band][differenceKey]?.let { prior ->
-                    for (k in prior.indices.reversed()) {
-                        val j = prior[k]
-                        if (photo.dateSeconds - candidates[j].dateSeconds > 15 * 60) break
-                        possible.add(j)
-                    }
-                }
-                val averageKey = ((photo.averageHash ushr (band * 8)) and 255L).toInt()
-                averageBands[band][averageKey]?.let { prior ->
-                    possible.addAll(prior)
-                }
-            }
-            for (j in possible) {
-                val other = candidates[j]
-                val differenceDistance = java.lang.Long.bitCount(photo.hash xor other.hash)
-                val averageDistance = java.lang.Long.bitCount(photo.averageHash xor other.averageHash)
-                val closeInTime = abs(photo.dateSeconds - other.dateSeconds) <= 15 * 60
-                val sameShape = photo.width > 0 && photo.height > 0 && other.width > 0 && other.height > 0 &&
-                    abs((photo.width.toDouble() / photo.height) / (other.width.toDouble() / other.height) - 1.0) <= 0.08
-                val globallySimilar = sameShape && averageDistance <= 4 && differenceDistance <= 20
-                val burstSimilar = closeInTime && differenceDistance <= 7
-                if (globallySimilar || burstSimilar) join(i, j)
-            }
-            for (band in 0 until 8) {
-                val differenceKey = ((photo.hash ushr (band * 8)) and 255L).toInt()
-                differenceBands[band].getOrPut(differenceKey) { ArrayList() }.add(i)
-                val averageKey = ((photo.averageHash ushr (band * 8)) and 255L).toInt()
-                averageBands[band].getOrPut(averageKey) { ArrayList() }.add(i)
+                val key = ((photo.pHash ushr (band * 8)) and 255L).toInt()
+                pHashBands[band].getOrPut(key) { ArrayList() }.add(photo)
             }
         }
-        val similar = candidates.indices.groupBy { root(it) }.values.filter { it.size > 1 }
-            .map { ids -> PhotoGroup(ids.map { candidates[it] }.sortedByDescending { it.quality }) }
-            .sortedByDescending { it.photos.size }
+        for (seed in ordered) {
+            if (!assigned.add(seed.uri)) continue
+            val cluster = arrayListOf(seed)
+            val possible = LinkedHashMap<Uri, Photo>()
+            for (band in 0 until 8) {
+                val key = ((seed.pHash ushr (band * 8)) and 255L).toInt()
+                pHashBands[band][key]?.forEach { possible[it.uri] = it }
+            }
+            for (candidate in possible.values.sortedByDescending { it.quality }) {
+                if (candidate.uri in assigned) continue
+                if (cluster.all { areVisuallySimilar(it, candidate) }) {
+                    cluster.add(candidate)
+                    assigned.add(candidate.uri)
+                }
+            }
+            if (cluster.size > 1) similar.add(PhotoGroup(cluster)) else assigned.remove(seed.uri)
+        }
+        similar.sortByDescending { it.photos.size }
         return Results(duplicates, similar)
+    }
+
+    private fun areVisuallySimilar(a: Photo, b: Photo): Boolean {
+        val pDistance = java.lang.Long.bitCount(a.pHash xor b.pHash)
+        val dDistance = java.lang.Long.bitCount(a.hash xor b.hash)
+        val sameShape = a.width > 0 && a.height > 0 && b.width > 0 && b.height > 0 &&
+            abs((a.width.toDouble() / a.height) / (b.width.toDouble() / b.height) - 1.0) <= 0.08
+        val closeInTime = abs(a.dateSeconds - b.dateSeconds) <= 15 * 60
+        val strictVisualMatch = pDistance <= 6 && dDistance <= 12
+        val burstMatch = closeInTime && pDistance <= 3 && dDistance <= 7
+        return sameShape && (strictVisualMatch || burstMatch)
     }
 
     private fun render() {
