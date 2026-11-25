@@ -430,8 +430,13 @@ class MainActivity : AppCompatActivity() {
             }
             sum
         } }
-        val median = coeff.flatMapIndexed { y, row -> row.mapIndexedNotNull { x, value -> if (x == 0 && y == 0) null else value } }
-            .sorted()[31]
+        val frequencies = DoubleArray(63)
+        var position = 0
+        for (y in 0 until 8) for (x in 0 until 8) {
+            if (x != 0 || y != 0) frequencies[position++] = coeff[y][x]
+        }
+        frequencies.sort()
+        val median = frequencies[31]
         var hash = 0L
         for (y in 0 until 8) for (x in 0 until 8) hash = (hash shl 1) or if (coeff[y][x] >= median) 1L else 0L
         return hash
