@@ -3,6 +3,7 @@ package com.photosweep.app
 import android.Manifest
 import android.app.Activity
 import android.content.ContentUris
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
@@ -12,7 +13,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
-import android.util.LruCache
 import android.util.Size
 import android.view.Gravity
 import android.view.View
@@ -32,7 +32,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import org.json.JSONObject
 import java.text.DateFormat
 import java.util.Date
 import java.util.concurrent.Callable
@@ -62,7 +61,6 @@ class MainActivity : AppCompatActivity() {
     data class PhotoGroup(val photos: List<Photo>)
     data class Results(val duplicates: List<PhotoGroup>, val similar: List<PhotoGroup>)
     private data class Meta(val uri: Uri, val name: String, val date: Long, val modified: Long, val bytes: Long, val width: Int, val height: Int)
-    private data class Cached(val modified: Long, val bytes: Long, val hash: Long, val averageHash: Long, val quality: Double)
     private sealed class Row {
         data class Heading(val label: String, val section: Boolean) : Row()
         data class Cell(val photo: Photo, val recommended: Boolean) : Row()
@@ -71,9 +69,6 @@ class MainActivity : AppCompatActivity() {
     private val scanControl = Executors.newSingleThreadExecutor()
     private val scanPool = Executors.newFixedThreadPool(4)
     private val imagePool = Executors.newFixedThreadPool(3)
-    private val thumbnailCache = object : LruCache<String, Bitmap>(8 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
-    }
     private lateinit var status: TextView
     private lateinit var scanButton: Button
     private lateinit var deleteButton: Button
@@ -90,8 +85,8 @@ class MainActivity : AppCompatActivity() {
     private var scanRun = 0
     private var pendingManualRefresh = false
 
-    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        if (grants.values.any { it }) scanGallery(pendingManualRefresh) else status.text = "برای بررسی عکس‌ها، اجازهٔ دسترسی به گالری لازم است."
+    private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        continueAfterPermission(pendingManualRefresh)
         pendingManualRefresh = false
     }
     private val deleteLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
@@ -99,15 +94,8 @@ class MainActivity : AppCompatActivity() {
             val removed = pendingDelete.toSet()
             photos = photos.filterNot { removed.contains(it.uri) }
             selected.removeAll(removed)
-            saveCache(photos)
-            results = groupPhotos(photos)
-            showStatus("حذف انجام شد. برای عکس‌های تازه، «به‌روزرسانی گالری» را بزن.")
-            render()
-            AlertDialog.Builder(this)
-                .setTitle("حذف انجام شد")
-                .setMessage("${removed.size} عکس حذف شد و از فهرست کنار رفت. اگر عکس تازه‌ای اضافه کرده‌ای، «به‌روزرسانی گالری» را بزن.")
-                .setPositiveButton("متوجه شدم", null)
-                .show()
+            showStatus("حذف انجام شد؛ در حال بررسی دوبارهٔ گالری…")
+            scanGallery()
         } else {
             status.text = "حذف لغو شد؛ عکس‌ها هنوز در فهرست هستند."
         }
@@ -231,10 +219,38 @@ class MainActivity : AppCompatActivity() {
             Build.VERSION.SDK_INT >= 33 -> arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
             else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
-        if (permissions.any { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
+        val hasImages = checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
+        val hasSelectedOnly = Build.VERSION.SDK_INT >= 34 &&
+            checkSelfPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED
+        if (hasImages) {
             scanGallery(manual)
             pendingManualRefresh = false
+        } else if (hasSelectedOnly) {
+            showFullGalleryAccessMessage()
         } else permissionLauncher.launch(permissions)
+    }
+
+    private fun continueAfterPermission(manual: Boolean) {
+        if (checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED) {
+            scanGallery(manual)
+        } else if (Build.VERSION.SDK_INT >= 34 &&
+            checkSelfPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED) {
+            showFullGalleryAccessMessage()
+        } else {
+            status.text = "برای بررسی همهٔ عکس‌ها، دسترسی کامل به تصاویر را فعال کن."
+        }
+    }
+
+    private fun showFullGalleryAccessMessage() {
+        AlertDialog.Builder(this)
+            .setTitle("دسترسی کامل به عکس‌ها")
+            .setMessage("در حال حاضر فقط عکس‌هایی که جداگانه انتخاب کرده‌ای در دسترس‌اند. برای پیدا کردن همهٔ عکس‌ها و اسکرین‌شات‌ها، در تنظیمات مجوز Duplio گزینهٔ «اجازهٔ دسترسی به همهٔ عکس‌ها» را انتخاب کن.")
+            .setPositiveButton("رفتن به تنظیمات") { _, _ ->
+                val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                startActivity(intent)
+            }
+            .setNegativeButton("بعداً", null)
+            .show()
     }
 
     private fun scanGallery(manual: Boolean = false) {
@@ -246,43 +262,32 @@ class MainActivity : AppCompatActivity() {
         status.text = "در حال فهرست‌کردن عکس‌های گالری…"
         scanControl.execute {
             try {
-                val cached = loadCache()
                 val metadata = queryMetadata()
-                val known = HashMap<String, Photo>(metadata.size)
-                val changed = ArrayList<Meta>()
-                for (meta in metadata) {
-                    val key = meta.uri.toString()
-                    val old = cached[key]
-                    if (old != null && old.averageHash != Long.MIN_VALUE && old.modified == meta.modified && old.bytes == meta.bytes) {
-                        known[key] = Photo(meta.uri, meta.name, meta.date, meta.modified, meta.bytes, meta.width, meta.height, old.hash, old.averageHash, old.quality)
-                    } else changed.add(meta)
-                }
-                runOnUiThread { if (run == scanRun) status.text = "در حال بررسی عکس‌های جدید یا تغییرکرده: ۰ از ${changed.size} • ${metadata.size} عکس در گالری" }
+                runOnUiThread { if (run == scanRun) status.text = "در حال بررسی ${metadata.size} عکس از گالری…" }
                 val completion = ExecutorCompletionService<Photo?>(scanPool)
-                changed.forEach { meta -> completion.submit(Callable { fingerprint(meta) }) }
+                metadata.forEach { meta -> completion.submit(Callable { fingerprint(meta) }) }
                 var done = 0
-                repeat(changed.size) {
+                val scanned = ArrayList<Photo>(metadata.size)
+                repeat(metadata.size) {
                     val photo = completion.take().get()
-                    if (photo != null) known[photo.uri.toString()] = photo
+                    if (photo != null) scanned.add(photo)
                     done++
-                    if (done % 40 == 0 || done == changed.size) {
+                    if (done % 40 == 0 || done == metadata.size) {
                         val current = done
-                        runOnUiThread { if (run == scanRun) status.text = "در حال بررسی عکس‌های جدید یا تغییرکرده: $current از ${changed.size} • ${metadata.size} عکس در گالری" }
+                        runOnUiThread { if (run == scanRun) status.text = "در حال بررسی عکس‌های گالری: $current از ${metadata.size}" }
                     }
                 }
-                val fresh = metadata.mapNotNull { known[it.uri.toString()] }.sortedByDescending { it.dateSeconds }
+                val fresh = scanned.sortedByDescending { it.dateSeconds }
                 val grouped = groupPhotos(fresh)
-                saveCache(fresh)
                 runOnUiThread {
                     if (run != scanRun) return@runOnUiThread
                     photos = fresh
                     results = grouped
                     scanButton.isEnabled = true
-                    val cachedCount = metadata.size - changed.size
                     val groupedPhotoCount = (grouped.duplicates + grouped.similar).flatMap { it.photos }.map { it.uri }.toSet().size
                     val ungroupedCount = (fresh.size - groupedPhotoCount).coerceAtLeast(0)
                     val unreadCount = (metadata.size - fresh.size).coerceAtLeast(0)
-                    val summary = "به‌روزرسانی تمام شد: ${changed.size} عکس تازه/تغییرکرده بررسی شد؛ $cachedCount عکس از cache آمد. ${grouped.duplicates.size} گروه تکراری و ${grouped.similar.size} گروه مشابه پیدا شد."
+                    val summary = "بررسی تمام شد: ${fresh.size} از ${metadata.size} عکس گالری خوانده شد. ${grouped.duplicates.size} گروه تکراری و ${grouped.similar.size} گروه مشابه پیدا شد."
                     showStatus(summary)
                     render()
                     if (manual) {
@@ -311,11 +316,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun queryMetadata(): List<Meta> {
         val out = ArrayList<Meta>()
-        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
         val columns = arrayOf(
             MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME, MediaStore.Images.Media.DATE_ADDED,
             MediaStore.Images.Media.DATE_MODIFIED, MediaStore.Images.Media.SIZE, MediaStore.Images.Media.WIDTH, MediaStore.Images.Media.HEIGHT
         )
+        val volumes = MediaStore.getExternalVolumeNames(this).ifEmpty { setOf(MediaStore.VOLUME_EXTERNAL_PRIMARY) }
+        for (volume in volumes) {
+        val collection = MediaStore.Images.Media.getContentUri(volume)
         contentResolver.query(collection, columns, null, null, "${MediaStore.Images.Media.DATE_ADDED} DESC")?.use { cursor ->
             val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
@@ -328,6 +335,7 @@ class MainActivity : AppCompatActivity() {
                 val uri = ContentUris.withAppendedId(collection, cursor.getLong(idCol))
                 out.add(Meta(uri, cursor.getString(nameCol) ?: "عکس", cursor.getLong(dateCol), cursor.getLong(modCol), cursor.getLong(sizeCol), cursor.getInt(widthCol), cursor.getInt(heightCol)))
             }
+        }
         }
         return out
     }
@@ -453,26 +461,6 @@ class MainActivity : AppCompatActivity() {
         return Results(duplicates, similar)
     }
 
-    private fun loadCache(): Map<String, Cached> {
-        val root = runCatching { JSONObject(getSharedPreferences("photo_index", MODE_PRIVATE).getString("items", "{}")) }.getOrElse { JSONObject() }
-        val cache = HashMap<String, Cached>(root.length())
-        val keys = root.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            val value = root.optJSONObject(key) ?: continue
-            cache[key] = Cached(value.optLong("modified"), value.optLong("bytes"), value.optLong("hash"), value.optLong("averageHash", Long.MIN_VALUE), value.optDouble("quality"))
-        }
-        return cache
-    }
-
-    private fun saveCache(items: List<Photo>) {
-        val json = JSONObject()
-        items.forEach { p ->
-            json.put(p.uri.toString(), JSONObject().put("modified", p.modifiedSeconds).put("bytes", p.bytes).put("hash", p.hash).put("averageHash", p.averageHash).put("quality", p.quality))
-        }
-        getSharedPreferences("photo_index", MODE_PRIVATE).edit().putString("items", json.toString()).apply()
-    }
-
     private fun render() {
         duplicateTab.text = "تکراری‌ها (${results.duplicates.size})"
         similarTab.text = "مشابه‌ها (${results.similar.size})"
@@ -596,8 +584,7 @@ class MainActivity : AppCompatActivity() {
             fun bind(row: Row.Cell) {
                 val photo = row.photo
                 image.tag = photo.uri.toString()
-                val cachedBitmap = thumbnailCache.get(photo.uri.toString())
-                image.setImageBitmap(cachedBitmap)
+                image.setImageDrawable(null)
                 star.visibility = if (row.recommended) View.VISIBLE else View.GONE
                 name.text = photo.name
                 date.text = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(photo.dateSeconds * 1000))
@@ -617,13 +604,10 @@ class MainActivity : AppCompatActivity() {
                     )
                     updateDeleteButton()
                 }
-                if (cachedBitmap == null) {
-                    imagePool.execute {
-                        val bitmap = runCatching { contentResolver.loadThumbnail(photo.uri, Size(320, 320), null) }.getOrNull()
-                        if (bitmap != null) {
-                            thumbnailCache.put(photo.uri.toString(), bitmap)
-                            runOnUiThread { if (image.tag == photo.uri.toString()) image.setImageBitmap(bitmap) }
-                        }
+                imagePool.execute {
+                    val bitmap = runCatching { contentResolver.loadThumbnail(photo.uri, Size(320, 320), null) }.getOrNull()
+                    if (bitmap != null) {
+                        runOnUiThread { if (image.tag == photo.uri.toString()) image.setImageBitmap(bitmap) }
                     }
                 }
             }
