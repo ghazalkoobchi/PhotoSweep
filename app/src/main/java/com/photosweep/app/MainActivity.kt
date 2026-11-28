@@ -21,6 +21,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -543,11 +544,40 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun requestDelete() {
-        if (selected.isEmpty()) return
-        pendingDelete = selected.toList()
+    private fun requestDelete(targets: List<Uri> = selected.toList()) {
+        if (targets.isEmpty()) return
+        pendingDelete = targets.distinct()
         val request = MediaStore.createDeleteRequest(contentResolver, pendingDelete)
         deleteLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+    }
+
+    private fun showPhotoPreview(photo: Photo) {
+        val preview = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setBackgroundColor(0xFF111111.toInt())
+            contentDescription = photo.name
+        }
+        val maxHeight = (resources.displayMetrics.heightPixels * 0.68f).toInt()
+        preview.layoutParams = ViewGroup.LayoutParams(-1, maxHeight)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(photo.name)
+            .setView(preview, dp(12), dp(8), dp(12), dp(8))
+            .setPositiveButton("حذف همین عکس", null)
+            .setNegativeButton("بستن", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(0xFFB3261D.toInt())
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                dialog.dismiss()
+                requestDelete(listOf(photo.uri))
+            }
+        }
+        dialog.show()
+        imagePool.execute {
+            val bitmap = runCatching { contentResolver.loadThumbnail(photo.uri, Size(1600, 1600), null) }.getOrNull()
+            if (bitmap != null) runOnUiThread { if (!isFinishing && preview.isAttachedToWindow) preview.setImageBitmap(bitmap) }
+        }
     }
 
     private inner class PhotoAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
@@ -599,12 +629,23 @@ class MainActivity : AppCompatActivity() {
             frame.addView(star, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.RIGHT).apply {
                 rightMargin = dp(7); topMargin = dp(7)
             })
+            val zoom = ImageButton(this@MainActivity).apply {
+                setImageResource(R.drawable.ic_zoom)
+                imageTintList = ColorStateList.valueOf(0xFFFFFFFF.toInt())
+                contentDescription = "بزرگ‌نمایی عکس"
+                background = rounded(0xB3173831.toInt(), 20, 0)
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+            }
+            frame.addView(zoom, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.BOTTOM or Gravity.RIGHT).apply {
+                rightMargin = dp(7); bottomMargin = dp(7)
+            })
             card.addView(frame)
             val name = text("", 12, true).apply { setTextColor(ink); maxLines = 2; setPadding(dp(2), dp(8), dp(2), 0); minHeight = dp(42); gravity = Gravity.RIGHT or Gravity.CENTER_VERTICAL }
             card.addView(name)
             val date = text("", 10, false).apply { setTextColor(supporting); setPadding(dp(2), dp(3), dp(2), 0) }
             card.addView(date)
-            return PhotoHolder(card, image, check, star, name, date)
+            return PhotoHolder(card, image, check, star, zoom, name, date)
         }
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             when (val row = rows[position]) {
@@ -625,6 +666,7 @@ class MainActivity : AppCompatActivity() {
             private val image: ImageView,
             private val check: CheckBox,
             private val star: TextView,
+            private val zoom: ImageButton,
             private val name: TextView,
             private val date: TextView
         ) : RecyclerView.ViewHolder(view) {
@@ -634,6 +676,8 @@ class MainActivity : AppCompatActivity() {
                 image.setImageDrawable(null)
                 star.visibility = if (row.recommended) View.VISIBLE else View.GONE
                 name.text = photo.name
+                zoom.contentDescription = "نمایش بزرگ ${photo.name}"
+                zoom.setOnClickListener { showPhotoPreview(photo) }
                 date.text = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(photo.dateSeconds * 1000))
                 check.setOnCheckedChangeListener(null)
                 check.isChecked = selected.contains(photo.uri)
