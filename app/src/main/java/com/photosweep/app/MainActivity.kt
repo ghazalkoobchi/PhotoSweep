@@ -2,6 +2,7 @@ package com.photosweep.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.Dialog
 import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -75,10 +76,13 @@ class MainActivity : AppCompatActivity() {
     private val imagePool = Executors.newFixedThreadPool(3)
     private lateinit var status: TextView
     private lateinit var scanButton: Button
+    private lateinit var scanProgress: ProgressBar
     private lateinit var deleteButton: Button
     private lateinit var selectionLabel: TextView
     private lateinit var duplicateTab: Button
     private lateinit var similarTab: Button
+    private lateinit var duplicateTabProgress: ProgressBar
+    private lateinit var similarTabProgress: ProgressBar
     private lateinit var list: RecyclerView
     private lateinit var adapter: PhotoAdapter
     private val selected = linkedSetOf<Uri>()
@@ -129,6 +133,13 @@ class MainActivity : AppCompatActivity() {
             background = rounded(0xFFE2EEEA.toInt(), 12, 0)
         }
         page.addView(status)
+        scanProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 1000
+            progressTintList = ColorStateList.valueOf(0xFF168BFA.toInt())
+            progressBackgroundTintList = ColorStateList.valueOf(0xFFD5E4F2.toInt())
+            visibility = View.GONE
+        }
+        page.addView(scanProgress, LinearLayout.LayoutParams(-1, dp(5)).apply { topMargin = dp(6) })
         scanButton = Button(this).apply {
             text = "بررسی / به‌روزرسانی گالری"
             styleButton(this, brandGreen, 0xFFFFFFFF.toInt())
@@ -139,8 +150,14 @@ class MainActivity : AppCompatActivity() {
         val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         duplicateTab = Button(this).apply { styleButton(this, 0xFFD6D8D7.toInt(), ink); setOnClickListener { showingDuplicates = true; render() } }
         similarTab = Button(this).apply { styleButton(this, 0xFFD6D8D7.toInt(), ink); setOnClickListener { showingDuplicates = false; render() } }
-        tabs.addView(duplicateTab, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(6) })
-        tabs.addView(similarTab, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(6) })
+        val duplicateTabFrame = FrameLayout(this)
+        duplicateTabFrame.addView(duplicateTab, FrameLayout.LayoutParams(-1, -1))
+        duplicateTabProgress = createTabProgress().also { duplicateTabFrame.addView(it, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER_VERTICAL or Gravity.LEFT).apply { leftMargin = dp(12) }) }
+        val similarTabFrame = FrameLayout(this)
+        similarTabFrame.addView(similarTab, FrameLayout.LayoutParams(-1, -1))
+        similarTabProgress = createTabProgress().also { similarTabFrame.addView(it, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER_VERTICAL or Gravity.LEFT).apply { leftMargin = dp(12) }) }
+        tabs.addView(duplicateTabFrame, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(6) })
+        tabs.addView(similarTabFrame, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginStart = dp(6) })
         page.addView(tabs, LinearLayout.LayoutParams(-1, dp(48)).apply { bottomMargin = dp(8) })
 
         list = RecyclerView(this).apply { setBackgroundColor(pageColor); itemAnimator = null; clipToPadding = false; setPadding(0, dp(2), 0, dp(4)) }
@@ -212,6 +229,13 @@ class MainActivity : AppCompatActivity() {
         button.stateListAnimator = null
     }
 
+    private fun createTabProgress() = ProgressBar(this).apply {
+        isIndeterminate = true
+        indeterminateTintList = ColorStateList.valueOf(0xFF168BFA.toInt())
+        visibility = View.GONE
+        isClickable = false
+    }
+
     private fun text(value: String, size: Int, bold: Boolean): TextView = TextView(this).apply {
         text = value; textSize = size.toFloat(); gravity = Gravity.RIGHT
         if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -264,11 +288,20 @@ class MainActivity : AppCompatActivity() {
         selected.clear()
         updateDeleteButton()
         scanButton.isEnabled = false
+        setScanning(true)
         status.text = "در حال فهرست‌کردن عکس‌های گالری…"
+        scanProgress.isIndeterminate = true
         scanControl.execute {
             try {
                 val metadata = queryMetadata()
-                runOnUiThread { if (run == scanRun) status.text = "در حال بررسی ${metadata.size} عکس از گالری…" }
+                runOnUiThread {
+                    if (run == scanRun) {
+                        status.text = "در حال بررسی ${metadata.size} عکس از گالری…"
+                        scanProgress.isIndeterminate = false
+                        scanProgress.max = metadata.size.coerceAtLeast(1)
+                        scanProgress.progress = 0
+                    }
+                }
                 val completion = ExecutorCompletionService<Photo?>(scanPool)
                 metadata.forEach { meta -> completion.submit(Callable { fingerprint(meta) }) }
                 var done = 0
@@ -277,9 +310,14 @@ class MainActivity : AppCompatActivity() {
                     val photo = completion.take().get()
                     if (photo != null) scanned.add(photo)
                     done++
-                    if (done % 40 == 0 || done == metadata.size) {
+                    if (done % 10 == 0 || done == metadata.size) {
                         val current = done
-                        runOnUiThread { if (run == scanRun) status.text = "در حال بررسی عکس‌های گالری: $current از ${metadata.size}" }
+                        runOnUiThread {
+                            if (run == scanRun) {
+                                status.text = "در حال بررسی عکس‌های گالری: $current از ${metadata.size}"
+                                scanProgress.progress = current
+                            }
+                        }
                     }
                 }
                 val fresh = scanned.sortedByDescending { it.dateSeconds }
@@ -289,6 +327,7 @@ class MainActivity : AppCompatActivity() {
                     photos = fresh
                     results = grouped
                     scanButton.isEnabled = true
+                    setScanning(false)
                     val groupedPhotoCount = (grouped.duplicates + grouped.similar).flatMap { it.photos }.map { it.uri }.toSet().size
                     val ungroupedCount = (fresh.size - groupedPhotoCount).coerceAtLeast(0)
                     val unreadCount = (metadata.size - fresh.size).coerceAtLeast(0)
@@ -312,6 +351,8 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (run == scanRun) {
                         scanButton.isEnabled = true
+                        setScanning(false)
+                        scanProgress.visibility = View.GONE
                         status.text = "بررسی کامل نشد: ${error.localizedMessage ?: "خطای دسترسی به گالری"}"
                     }
                 }
@@ -533,6 +574,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun showStatus(value: String) { status.text = value }
 
+    private fun setScanning(scanning: Boolean) {
+        scanProgress.visibility = if (scanning) View.VISIBLE else View.GONE
+        duplicateTabProgress.visibility = if (scanning) View.VISIBLE else View.GONE
+        similarTabProgress.visibility = if (scanning) View.VISIBLE else View.GONE
+    }
+
     private fun updateDeleteButton() {
         if (!::deleteButton.isInitialized) return
         deleteButton.text = "حذف انتخاب‌شده‌ها (${selected.size})"
@@ -554,29 +601,44 @@ class MainActivity : AppCompatActivity() {
     private fun showPhotoPreview(photo: Photo) {
         val preview = ImageView(this).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
-            setBackgroundColor(0xFF111111.toInt())
             contentDescription = photo.name
         }
-        val maxHeight = (resources.displayMetrics.heightPixels * 0.68f).toInt()
-        preview.layoutParams = ViewGroup.LayoutParams(-1, maxHeight)
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(photo.name)
-            .setView(preview, dp(12), dp(8), dp(12), dp(8))
-            .setPositiveButton("حذف همین عکس", null)
-            .setNegativeButton("بستن", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(0xFFB3261D.toInt())
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                dialog.dismiss()
+        val root = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
+        root.addView(preview, FrameLayout.LayoutParams(-1, -1))
+        val close = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_close)
+            imageTintList = ColorStateList.valueOf(0xFFFFFFFF.toInt())
+            contentDescription = "بستن پیش‌نمایش"
+            background = null
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setOnClickListener { (tag as? Dialog)?.dismiss() }
+        }
+        root.addView(close, FrameLayout.LayoutParams(dp(52), dp(52), Gravity.TOP or Gravity.LEFT).apply {
+            leftMargin = dp(8); topMargin = dp(8)
+        })
+        val trash = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_delete)
+            imageTintList = ColorStateList.valueOf(0xFFFFFFFF.toInt())
+            contentDescription = "حذف این عکس"
+            background = null
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setOnClickListener {
+                (tag as? Dialog)?.dismiss()
                 requestDelete(listOf(photo.uri))
             }
         }
+        root.addView(trash, FrameLayout.LayoutParams(-1, dp(64), Gravity.BOTTOM))
+        val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog.setContentView(root)
+        close.tag = dialog
+        trash.tag = dialog
+        dialog.window?.setBackgroundDrawableResource(android.R.color.black)
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         dialog.show()
+        dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         imagePool.execute {
             val bitmap = runCatching { contentResolver.loadThumbnail(photo.uri, Size(1600, 1600), null) }.getOrNull()
-            if (bitmap != null) runOnUiThread { if (!isFinishing && preview.isAttachedToWindow) preview.setImageBitmap(bitmap) }
+            if (bitmap != null) runOnUiThread { if (!isFinishing && dialog.isShowing) preview.setImageBitmap(bitmap) }
         }
     }
 
