@@ -130,7 +130,8 @@ class MainActivity : AppCompatActivity() {
         page.addView(status)
         scanButton = Button(this).apply {
             text = "بررسی / به‌روزرسانی گالری"
-            styleButton(this, 0xFFD6D8D7.toInt(), ink)
+            styleButton(this, brandGreen, 0xFFFFFFFF.toInt())
+            // Keep the gallery action visually distinct from the neutral category tabs.
             setOnClickListener { ensurePermission(manual = true) }
         }
         page.addView(scanButton, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(12); bottomMargin = dp(10) })
@@ -583,19 +584,19 @@ class MainActivity : AppCompatActivity() {
                     arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
                     intArrayOf(0xFF167A63.toInt(), 0xFF59645F.toInt())
                 )
-                setPadding(dp(8), dp(8), dp(8), dp(8))
-                background = rounded(0xCCFFFFFF.toInt(), 12, 0)
-                scaleX = 0.92f; scaleY = 0.92f
+                setPadding(dp(9), 0, 0, 0)
+                background = rounded(0xCCFFFFFF.toInt(), 10, 0)
             }
-            frame.addView(check, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.END).apply {
-                rightMargin = dp(7); topMargin = dp(7)
+            // The selection control stays opposite the recommendation badge.
+            frame.addView(check, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.TOP or Gravity.LEFT).apply {
+                leftMargin = dp(7); topMargin = dp(7)
             })
             val star = TextView(this@MainActivity).apply {
                 text = "★ بهترین"; textSize = 11f; setTextColor(0xFF167A63.toInt())
                 background = rounded(0xFFDCEFE8.toInt(), 9, 0)
                 setPadding(dp(8), dp(5), dp(8), dp(5)); visibility = View.GONE
             }
-            frame.addView(star, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply {
+            frame.addView(star, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.RIGHT).apply {
                 rightMargin = dp(7); topMargin = dp(7)
             })
             card.addView(frame)
