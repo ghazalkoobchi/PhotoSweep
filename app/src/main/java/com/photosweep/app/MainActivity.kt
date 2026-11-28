@@ -451,8 +451,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun groupPhotos(items: List<Photo>): Results {
         val exactBuckets = items.distinctBy { it.uri }.groupBy { it.sha256 }
-        val duplicates = exactBuckets.values.filter { it.size > 1 }.map { PhotoGroup(it.sortedByDescending { p -> p.quality }) }
-            .sortedByDescending { it.photos.size }
+        val duplicates = exactBuckets.values.filter { it.size > 1 }
+            .map { PhotoGroup(it.sortedByDescending { photo -> photo.dateSeconds }) }
+            // Order groups by their newest photo, so recent groups appear first.
+            .sortedByDescending { group -> group.photos.maxOf { photo -> photo.dateSeconds } }
         val duplicateUris = duplicates.flatMap { it.photos }.map { it.uri }.toHashSet()
         val candidates = items.filterNot { duplicateUris.contains(it.uri) }
         if (candidates.size < 2) return Results(duplicates, emptyList())
@@ -481,9 +483,14 @@ class MainActivity : AppCompatActivity() {
                     assigned.add(candidate.uri)
                 }
             }
-            if (cluster.size > 1) similar.add(PhotoGroup(cluster)) else assigned.remove(seed.uri)
+            if (cluster.size > 1) {
+                similar.add(PhotoGroup(cluster.sortedByDescending { photo -> photo.dateSeconds }))
+            } else {
+                assigned.remove(seed.uri)
+            }
         }
-        similar.sortByDescending { it.photos.size }
+        // Use the newest capture time in each group as the group-level sort key.
+        similar.sortByDescending { group -> group.photos.maxOf { photo -> photo.dateSeconds } }
         return Results(duplicates, similar)
     }
 
